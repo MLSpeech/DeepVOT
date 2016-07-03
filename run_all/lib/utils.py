@@ -1,6 +1,6 @@
-# run system commands
-from subprocess import call
 
+from subprocess import call
+import tempfile
 
 def easy_call(command):
     try:
@@ -27,3 +27,7 @@ def get_wav_file_length(wav_file):
         rate = f.getframerate()
         duration = frames / float(rate)
     return duration
+
+
+def generate_tmp_filename(extension="txt"):
+    return tempfile._get_default_tempdir() + "/" + next(tempfile._get_candidate_names()) + "." + extension
