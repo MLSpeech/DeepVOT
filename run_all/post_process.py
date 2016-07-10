@@ -36,7 +36,6 @@ def post_process(prob_file, output_path):
     N_min[2] = 2
     N_max[2] = 100
 
-    predictions = list()
     P = np.asarray(utter)
     
     # number of frames
@@ -66,12 +65,10 @@ def post_process(prob_file, output_path):
                 n_best[1] = -1
                 n_best[2] = n2
 
-    predictions.append(n_best)
-
     with open(output_path, 'w') as fid:
-        for p in predictions:
-            fid.write(str(p[0]) + ' ' + str(p[1]) + ' ' + str(p[2]) + '\n')
+        fid.write("%f %f %f\n" % (n_best[0], n_best[1], n_best[2]))
     fid.close()
+    return n_best
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-
 import argparse
 import os
 import sys
@@ -10,12 +9,13 @@ from run_backend import run
 from lib.utils import *
 from lib.textgrid import *
 
+
 def predict(wav_path, textgrid_path, start_extract, end_extract):
     tmp_feature_file = generate_tmp_filename('features')
     tmp_prob_file = generate_tmp_filename('prob')
     tmp_predict_file = generate_tmp_filename('prediction')
     if not os.path.exists(wav_path):
-        print >>sys.stderr, "wav file %s does not exits" % wav_path
+        print >> sys.stderr, "wav file %s does not exits" % wav_path
         return
     length = utils.get_wav_file_length(wav_path)
 
@@ -33,12 +33,15 @@ def predict(wav_path, textgrid_path, start_extract, end_extract):
     os.remove(tmp_predict_file)
 
 
-def predict_from_textgrid(wav_path, textgrid_path):
+def predict_from_textgrid(wav_path, textgrid_path, tier, csv_outfile):
     tmp_feature_file = generate_tmp_filename('features')
     tmp_prob_file = generate_tmp_filename('prob')
     tmp_predict_file = generate_tmp_filename('prediction')
+    # defines
+    msc_2_sec = 0.001
+
     if not os.path.exists(wav_path):
-        print >>sys.stderr, "wav file %s does not exits" % wav_path
+        print >> sys.stderr, "wav file %s does not exits" % wav_path
         return
     length = utils.get_wav_file_length(wav_path)
 
@@ -47,45 +50,68 @@ def predict_from_textgrid(wav_path, textgrid_path):
     textgrid.read(textgrid_path)
     tier_names = textgrid.tierNames()
 
-    window_xmin = list()
-    window_xmax = list()
-    window_mark = list()
-    tier_index = tier_names.index("word")
+    tier_index = tier_names.index(tier)
+
     # print all its interval, which has some value in their description (mark)
     for (i, interval) in enumerate(textgrid[tier_index]):
         if re.search(r'\S', interval.mark()):
             # define processing window
-            window_xmin.append(max(textgrid.xmin(), textgrid[tier_index][i].xmin() - 0.1))
-            window_xmax.append(min((textgrid[tier_index][i].xmin() + 0.1, textgrid.xmax())))
-            window_mark.append(i)
-
-    # prepare TextGrid
-    window_tier = IntervalTier(name='window', xmin=textgrid.xmin(), xmax=textgrid.xmax())
-    window_tier.append(Interval(textgrid.xmin(), window_xmin[0], ''))
-    for i in xrange(0, len(window_xmin)-1):
-        window_tier.append(Interval(window_xmin[i], window_xmax[i], window_mark[i]))
-        window_tier.append(Interval(window_xmax[i], window_xmin[i+1], ''))
-    window_tier.append(Interval(window_xmin[-1], window_xmax[-1], window_mark[-1]))
-    window_tier.append(Interval(window_xmax[-1], textgrid.xmax(), ''))
-
-    # write textgrid
-    textgrid.append(window_tier)
-    textgrid.write(textgrid_filename)
-
-
+            start_extract = textgrid[tier_index][i].xmin()
+            end_extract = textgrid[tier_index][i].xmax()
 
     print '\n1) Extracting features and classifying ...'
     extract_features(wav_path, tmp_feature_file, start_extract, end_extract)
+
+    print '\n2) Make predictions ...'
     run(tmp_feature_file, tmp_prob_file)
+
     print '\n3) Extract Durations ...'
-    post_process(tmp_prob_file, tmp_predict_file)
+    p = post_process(tmp_prob_file, tmp_predict_file)
+
     print '\n4) Writing TextGrid file to %s ...' % textgrid_path
-    create_text_grid(tmp_predict_file, textgrid_path, length, float(start_extract))
+    onset = -1
+    offset = -1
+    prevoiced = -1
+
+    # prepare TextGrid
+    vot_tier = IntervalTier(name='vot', xmin=0.0, xmax=float(length))
+    if p[1] == -1:
+        onset = p[0]
+        offset = p[2]
+
+        vot_tier.append(Interval(0, float(onset) * msc_2_sec + start_extract, ""))
+        vot_tier.append(
+            Interval(float(onset) * msc_2_sec + start_extract, float(offset) * msc_2_sec + start_extract, "DeepVOT"))
+        vot_tier.append(Interval(float(offset) * msc_2_sec + start_extract, float(length), ""))
+        # write textgrid
+        textgrid.append(vot_tier)
+        textgrid.write(textgrid_path)
+    if p[1] != -1:
+        prevoiced = p[0]
+        onset = p[1]
+        offset = p[2]
+
+        vot_tier.append(Interval(0, float(prevoiced) * msc_2_sec + start_extract, ""))
+        vot_tier.append(Interval(float(prevoiced) * msc_2_sec + start_extract, float(onset) * msc_2_sec + start_extract,
+                                 "prevoicing"))
+        vot_tier.append(
+            Interval(float(onset) * msc_2_sec + start_extract, float(offset) * msc_2_sec + start_extract, "DeepVOT"))
+        vot_tier.append(Interval(float(offset) * msc_2_sec + start_extract, float(length), ""))
+        # write textgrid
+        textgrid.append(vot_tier)
+        textgrid.write(textgrid_path)
 
     # remove leftovers
     os.remove(tmp_feature_file)
     os.remove(tmp_prob_file)
     os.remove(tmp_predict_file)
+
+    if csv_outfile:
+        with open(csv_outfile, 'w') as f:
+            f.write("FILE, PREVOICE TIME, START_TIME, END_TIME\n")
+            f.write("%s, %f, %f, %f\n" % (wav_path, (float(prevoiced) * msc_2_sec + start_extract) * 10,
+                                          (float(onset) * msc_2_sec + start_extract) * 10,
+                                          (float(offset) * msc_2_sec + start_extract) * 10))
 
 
 if __name__ == "__main__":
